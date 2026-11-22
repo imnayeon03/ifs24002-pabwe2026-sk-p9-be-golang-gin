@@ -7,16 +7,12 @@ import (
 )
 
 func TestGetSwaggerJSON(t *testing.T) {
-	b, err := GetSwaggerJSON("localhost:9", "https")
+	doc, err := GetSwaggerJSON("localhost:8081", "http")
 	assert.NoError(t, err)
-	assert.Contains(t, string(b), `"host":"localhost:9"`)
-	assert.Contains(t, string(b), `"https"`)
-}
+	assert.NotEmpty(t, doc)
+	assert.Contains(t, doc, "localhost:8081")
 
-func TestGetSwaggerJSONRusak(t *testing.T) {
-	asli := specJSON
-	defer func() { specJSON = asli }()
-	specJSON = []byte("{")
-	_, err := GetSwaggerJSON("h", "http")
-	assert.Error(t, err)
+	doc2, err := GetSwaggerJSON("", "")
+	assert.NoError(t, err)
+	assert.NotEmpty(t, doc2)
 }

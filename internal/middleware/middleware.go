@@ -1,105 +1,150 @@
 package middleware
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 
+	"app/internal/response"
+
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
-
-	"app/internal/response"
 )
 
-const ContextUser = "user"
+type JWTClaims struct {
+	UserID   uint   `json:"user_id"`
+	Username string `json:"username"`
+	Email    string `json:"email"`
+	Role     string `json:"role"`
+	jwt.RegisteredClaims
+}
 
-type Claims struct {
-	UserID   uint
-	Username string
-	Role     string
+func GenerateToken(userID uint, username, email, role, secretKey string, expDuration ...time.Duration) (string, error) {
+	dur := 24 * time.Hour
+	if len(expDuration) > 0 && expDuration[0] > 0 {
+		dur = expDuration[0]
+	}
+
+	claims := JWTClaims{
+		UserID:   userID,
+		Username: username,
+		Email:    email,
+		Role:     role,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(dur)),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+		},
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString([]byte(secretKey))
 }
 
 func CORS() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		h := c.Writer.Header()
-		h.Set("Access-Control-Allow-Origin", "*")
-		h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
-		h.Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+		c.Header("Access-Control-Allow-Origin", "*")
+		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+		c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Authorization, Accept, X-Requested-With")
+		c.Header("Access-Control-Expose-Headers", "Content-Length")
+		c.Header("Access-Control-Allow-Credentials", "true")
+
 		if c.Request.Method == http.MethodOptions {
 			c.AbortWithStatus(http.StatusNoContent)
 			return
 		}
+
 		c.Next()
 	}
 }
 
-// Auth memverifikasi Bearer JWT (HS256) dan menaruh Claims di context.
-func Auth(secret string) gin.HandlerFunc {
+func Auth(secretKey string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		raw := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
-		if raw == "" || raw == c.GetHeader("Authorization") {
-			response.AbortFail(c, http.StatusUnauthorized, "Token tidak ditemukan")
+		authHeader := c.GetHeader("Authorization")
+		if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
+			response.AbortFail(c, http.StatusUnauthorized, "Token autentikasi tidak ditemukan atau tidak valid")
 			return
 		}
-		tok, err := jwt.Parse(raw, func(*jwt.Token) (interface{}, error) { return []byte(secret), nil },
-			jwt.WithValidMethods([]string{"HS256"}))
-		if err != nil || !tok.Valid {
-			response.AbortFail(c, http.StatusUnauthorized, "Token tidak valid")
+
+		tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
+		token, err := jwt.ParseWithClaims(tokenStr, &JWTClaims{}, func(t *jwt.Token) (interface{}, error) {
+			if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, fmt.Errorf("metode signing tidak valid: %v", t.Header["alg"])
+			}
+			return []byte(secretKey), nil
+		})
+
+		if err != nil || !token.Valid {
+			response.AbortFail(c, http.StatusUnauthorized, "Token tidak valid atau telah kedaluwarsa")
 			return
 		}
-		m := tok.Claims.(jwt.MapClaims)
-		id, _ := m["uid"].(float64)
-		name, _ := m["username"].(string)
-		role, _ := m["role"].(string)
-		c.Set(ContextUser, Claims{UserID: uint(id), Username: name, Role: role})
+
+		claims := token.Claims.(*JWTClaims)
+
+		c.Set("user", claims)
+		c.Set("user_id", claims.UserID)
+		c.Set("username", claims.Username)
+		c.Set("email", claims.Email)
+		c.Set("role", claims.Role)
+
 		c.Next()
 	}
-}
-
-// CurrentUser mengambil Claims hasil Auth.
-func CurrentUser(c *gin.Context) Claims {
-	v, _ := c.Get(ContextUser)
-	cl, _ := v.(Claims)
-	return cl
 }
 
 func RequireRole(roles ...string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		role := CurrentUser(c).Role
-		for _, r := range roles {
-			if r == role {
+		userRole := c.GetString("role")
+		for _, role := range roles {
+			if strings.EqualFold(userRole, role) {
 				c.Next()
 				return
 			}
 		}
-		response.AbortFail(c, http.StatusForbidden, "Akses ditolak")
+		response.AbortFail(c, http.StatusForbidden, "Akses ditolak: role tidak memiliki izin")
 	}
 }
 
-// RateLimiter: maksimum `limit` request per IP per `window`.
-func RateLimiter(limit int, window time.Duration) gin.HandlerFunc {
-	var mu sync.Mutex
-	hits := map[string][]time.Time{}
+type clientRecord struct {
+	count     int
+	resetTime time.Time
+}
+
+var (
+	rateLimitStore = make(map[string]*clientRecord)
+	rateLimitMutex sync.Mutex
+)
+
+func RateLimiter(limit ...int) gin.HandlerFunc {
+	maxRequests := 1000
+	if len(limit) > 0 && limit[0] > 0 {
+		maxRequests = limit[0]
+	}
+
 	return func(c *gin.Context) {
+		ip := c.ClientIP()
 		now := time.Now()
-		mu.Lock()
-		recent := hits[c.ClientIP()][:0]
-		for _, t := range hits[c.ClientIP()] {
-			if now.Sub(t) < window {
-				recent = append(recent, t)
+
+		rateLimitMutex.Lock()
+		record, exists := rateLimitStore[ip]
+		if !exists || now.After(record.resetTime) {
+			rateLimitStore[ip] = &clientRecord{
+				count:     1,
+				resetTime: now.Add(time.Minute),
 			}
-		}
-		over := len(recent) >= limit
-		if !over {
-			recent = append(recent, now)
-		}
-		hits[c.ClientIP()] = recent
-		mu.Unlock()
-		if over {
-			response.AbortFail(c, http.StatusTooManyRequests, "Terlalu banyak permintaan")
+			rateLimitMutex.Unlock()
+			c.Next()
 			return
 		}
+
+		record.count++
+		if record.count > maxRequests {
+			rateLimitMutex.Unlock()
+			response.AbortFail(c, http.StatusTooManyRequests, "Terlalu banyak permintaan, coba lagi nanti")
+			return
+		}
+		rateLimitMutex.Unlock()
+
 		c.Next()
 	}
 }

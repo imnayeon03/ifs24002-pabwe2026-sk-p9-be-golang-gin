@@ -2,602 +2,72 @@
   "swagger": "2.0",
   "info": {
     "title": "Delcom Blog API",
-    "description": "REST API Delcom Blog (format respons {status,message,data})",
+    "description": "Dokumentasi REST API Delcom Blog Multi-Tier & AI Generator",
     "version": "1.0"
   },
-  "host": "localhost",
-  "basePath": "/",
+  "host": "localhost:8081",
+  "basePath": "/api",
   "schemes": [
-    "http"
+    "http",
+    "https"
   ],
-  "securityDefinitions": {
-    "BearerAuth": {
-      "type": "apiKey",
-      "name": "Authorization",
-      "in": "header",
-      "description": "Format: Bearer <token>"
-    }
-  },
   "paths": {
-    "/api/public/categories": {
+    "/public/categories": {
       "get": {
-        "summary": "Daftar kategori",
-        "tags": [
-          "public"
-        ],
+        "summary": "Daftar Kategori Publik",
         "responses": {
-          "200": {
-            "description": "Sukses"
-          },
-          "400": {
-            "description": "Permintaan tidak valid"
-          },
-          "500": {
-            "description": "Kesalahan server"
-          }
+          "200": { "description": "Success" }
         }
       }
     },
-    "/api/public/posts": {
+    "/public/posts": {
       "get": {
-        "summary": "Artikel terbit (?q=&category=)",
-        "tags": [
-          "public"
+        "summary": "Daftar Artikel Publik",
+        "parameters": [
+          { "name": "category", "in": "query", "type": "string" },
+          { "name": "q", "in": "query", "type": "string" }
         ],
         "responses": {
-          "200": {
-            "description": "Sukses"
-          },
-          "400": {
-            "description": "Permintaan tidak valid"
-          },
-          "500": {
-            "description": "Kesalahan server"
-          }
+          "200": { "description": "Success" }
         }
       }
     },
-    "/api/public/posts/{slug}": {
-      "get": {
-        "summary": "Detail artikel publik",
-        "tags": [
-          "public"
-        ],
-        "responses": {
-          "200": {
-            "description": "Sukses"
-          },
-          "400": {
-            "description": "Permintaan tidak valid"
-          },
-          "500": {
-            "description": "Kesalahan server"
-          }
-        },
-        "parameters": [
-          {
-            "name": "slug",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          }
-        ]
-      }
-    },
-    "/api/auth/register": {
+    "/auth/register": {
       "post": {
-        "summary": "Registrasi penulis",
-        "tags": [
-          "auth"
-        ],
+        "summary": "Registrasi Pengguna",
         "responses": {
-          "200": {
-            "description": "Sukses"
-          },
-          "400": {
-            "description": "Permintaan tidak valid"
-          },
-          "500": {
-            "description": "Kesalahan server"
-          }
-        },
-        "parameters": [
-          {
-            "name": "body",
-            "in": "body",
-            "schema": {
-              "type": "object"
-            }
-          }
-        ]
+          "201": { "description": "Created" }
+        }
       }
     },
-    "/api/auth/login": {
+    "/auth/login": {
       "post": {
-        "summary": "Login & token JWT",
-        "tags": [
-          "auth"
-        ],
+        "summary": "Login Pengguna",
         "responses": {
-          "200": {
-            "description": "Sukses"
-          },
-          "400": {
-            "description": "Permintaan tidak valid"
-          },
-          "500": {
-            "description": "Kesalahan server"
-          }
-        },
-        "parameters": [
-          {
-            "name": "body",
-            "in": "body",
-            "schema": {
-              "type": "object"
-            }
-          }
-        ]
+          "200": { "description": "Success" }
+        }
       }
     },
-    "/api/auth/logout": {
-      "post": {
-        "summary": "Logout",
-        "tags": [
-          "auth"
-        ],
-        "responses": {
-          "200": {
-            "description": "Sukses"
-          },
-          "400": {
-            "description": "Permintaan tidak valid"
-          },
-          "500": {
-            "description": "Kesalahan server"
-          },
-          "401": {
-            "description": "Belum login"
-          }
-        },
-        "parameters": [
-          {
-            "name": "body",
-            "in": "body",
-            "schema": {
-              "type": "object"
-            }
-          }
-        ],
-        "security": [
-          {
-            "BearerAuth": []
-          }
-        ]
-      }
-    },
-    "/api/auth/profile": {
+    "/posts": {
       "get": {
-        "summary": "Profil saya",
-        "tags": [
-          "auth"
-        ],
+        "summary": "Daftar Artikel Penulis",
         "responses": {
-          "200": {
-            "description": "Sukses"
-          },
-          "400": {
-            "description": "Permintaan tidak valid"
-          },
-          "500": {
-            "description": "Kesalahan server"
-          },
-          "401": {
-            "description": "Belum login"
-          }
-        },
-        "security": [
-          {
-            "BearerAuth": []
-          }
-        ]
-      },
-      "put": {
-        "summary": "Perbarui profil",
-        "tags": [
-          "auth"
-        ],
-        "responses": {
-          "200": {
-            "description": "Sukses"
-          },
-          "400": {
-            "description": "Permintaan tidak valid"
-          },
-          "500": {
-            "description": "Kesalahan server"
-          },
-          "401": {
-            "description": "Belum login"
-          }
-        },
-        "parameters": [
-          {
-            "name": "body",
-            "in": "body",
-            "schema": {
-              "type": "object"
-            }
-          }
-        ],
-        "security": [
-          {
-            "BearerAuth": []
-          }
-        ]
-      }
-    },
-    "/api/posts": {
-      "get": {
-        "summary": "Artikel saya",
-        "tags": [
-          "posts"
-        ],
-        "responses": {
-          "200": {
-            "description": "Sukses"
-          },
-          "400": {
-            "description": "Permintaan tidak valid"
-          },
-          "500": {
-            "description": "Kesalahan server"
-          },
-          "401": {
-            "description": "Belum login"
-          }
-        },
-        "security": [
-          {
-            "BearerAuth": []
-          }
-        ]
+          "200": { "description": "Success" }
+        }
       },
       "post": {
-        "summary": "Buat artikel",
-        "tags": [
-          "posts"
-        ],
+        "summary": "Tambah Artikel",
         "responses": {
-          "200": {
-            "description": "Sukses"
-          },
-          "400": {
-            "description": "Permintaan tidak valid"
-          },
-          "500": {
-            "description": "Kesalahan server"
-          },
-          "401": {
-            "description": "Belum login"
-          }
-        },
-        "parameters": [
-          {
-            "name": "body",
-            "in": "body",
-            "schema": {
-              "type": "object"
-            }
-          }
-        ],
-        "security": [
-          {
-            "BearerAuth": []
-          }
-        ]
+          "201": { "description": "Created" }
+        }
       }
     },
-    "/api/posts/stats": {
-      "get": {
-        "summary": "Statistik penulis",
-        "tags": [
-          "posts"
-        ],
-        "responses": {
-          "200": {
-            "description": "Sukses"
-          },
-          "400": {
-            "description": "Permintaan tidak valid"
-          },
-          "500": {
-            "description": "Kesalahan server"
-          },
-          "401": {
-            "description": "Belum login"
-          }
-        },
-        "security": [
-          {
-            "BearerAuth": []
-          }
-        ]
-      }
-    },
-    "/api/posts/{id}": {
-      "get": {
-        "summary": "Detail artikel saya",
-        "tags": [
-          "posts"
-        ],
-        "responses": {
-          "200": {
-            "description": "Sukses"
-          },
-          "400": {
-            "description": "Permintaan tidak valid"
-          },
-          "500": {
-            "description": "Kesalahan server"
-          },
-          "401": {
-            "description": "Belum login"
-          }
-        },
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "type": "integer"
-          }
-        ],
-        "security": [
-          {
-            "BearerAuth": []
-          }
-        ]
-      },
-      "put": {
-        "summary": "Ubah artikel",
-        "tags": [
-          "posts"
-        ],
-        "responses": {
-          "200": {
-            "description": "Sukses"
-          },
-          "400": {
-            "description": "Permintaan tidak valid"
-          },
-          "500": {
-            "description": "Kesalahan server"
-          },
-          "401": {
-            "description": "Belum login"
-          }
-        },
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "type": "integer"
-          },
-          {
-            "name": "body",
-            "in": "body",
-            "schema": {
-              "type": "object"
-            }
-          }
-        ],
-        "security": [
-          {
-            "BearerAuth": []
-          }
-        ]
-      },
-      "delete": {
-        "summary": "Hapus artikel",
-        "tags": [
-          "posts"
-        ],
-        "responses": {
-          "200": {
-            "description": "Sukses"
-          },
-          "400": {
-            "description": "Permintaan tidak valid"
-          },
-          "500": {
-            "description": "Kesalahan server"
-          },
-          "401": {
-            "description": "Belum login"
-          }
-        },
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "type": "integer"
-          }
-        ],
-        "security": [
-          {
-            "BearerAuth": []
-          }
-        ]
-      }
-    },
-    "/api/posts/{id}/toggle-publish": {
-      "patch": {
-        "summary": "Draf/Terbit",
-        "tags": [
-          "posts"
-        ],
-        "responses": {
-          "200": {
-            "description": "Sukses"
-          },
-          "400": {
-            "description": "Permintaan tidak valid"
-          },
-          "500": {
-            "description": "Kesalahan server"
-          },
-          "401": {
-            "description": "Belum login"
-          }
-        },
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "type": "integer"
-          },
-          {
-            "name": "body",
-            "in": "body",
-            "schema": {
-              "type": "object"
-            }
-          }
-        ],
-        "security": [
-          {
-            "BearerAuth": []
-          }
-        ]
-      }
-    },
-    "/api/posts/ai-generate": {
+    "/posts/ai-generate": {
       "post": {
-        "summary": "AI generator + search engine",
-        "tags": [
-          "posts"
-        ],
+        "summary": "Generate Draf Artikel AI",
         "responses": {
-          "200": {
-            "description": "Sukses"
-          },
-          "400": {
-            "description": "Permintaan tidak valid"
-          },
-          "500": {
-            "description": "Kesalahan server"
-          },
-          "401": {
-            "description": "Belum login"
-          }
-        },
-        "parameters": [
-          {
-            "name": "body",
-            "in": "body",
-            "schema": {
-              "type": "object"
-            }
-          }
-        ],
-        "security": [
-          {
-            "BearerAuth": []
-          }
-        ]
-      }
-    },
-    "/api/admin/users": {
-      "get": {
-        "summary": "Admin: pengguna",
-        "tags": [
-          "admin"
-        ],
-        "responses": {
-          "200": {
-            "description": "Sukses"
-          },
-          "400": {
-            "description": "Permintaan tidak valid"
-          },
-          "500": {
-            "description": "Kesalahan server"
-          },
-          "401": {
-            "description": "Belum login"
-          }
-        },
-        "security": [
-          {
-            "BearerAuth": []
-          }
-        ]
-      }
-    },
-    "/api/admin/posts": {
-      "get": {
-        "summary": "Admin: semua artikel",
-        "tags": [
-          "admin"
-        ],
-        "responses": {
-          "200": {
-            "description": "Sukses"
-          },
-          "400": {
-            "description": "Permintaan tidak valid"
-          },
-          "500": {
-            "description": "Kesalahan server"
-          },
-          "401": {
-            "description": "Belum login"
-          }
-        },
-        "security": [
-          {
-            "BearerAuth": []
-          }
-        ]
-      }
-    },
-    "/api/admin/users/{id}/posts": {
-      "get": {
-        "summary": "Admin: artikel pengguna",
-        "tags": [
-          "admin"
-        ],
-        "responses": {
-          "200": {
-            "description": "Sukses"
-          },
-          "400": {
-            "description": "Permintaan tidak valid"
-          },
-          "500": {
-            "description": "Kesalahan server"
-          },
-          "401": {
-            "description": "Belum login"
-          }
-        },
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "type": "integer"
-          }
-        ],
-        "security": [
-          {
-            "BearerAuth": []
-          }
-        ]
+          "200": { "description": "Success" }
+        }
       }
     }
   }

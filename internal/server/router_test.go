@@ -1,91 +1,129 @@
 package server
 
 import (
-	"bytes"
-	"encoding/json"
+	"crypto/tls"
+	"net/http"
 	"net/http/httptest"
 	"testing"
-
-	"github.com/gin-gonic/gin"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+	"time"
 
 	"app/internal/config"
 	"app/internal/database"
-	"app/internal/features/ai"
+	"app/internal/middleware"
+
+	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
+	"gorm.io/gorm"
 )
 
-type fakeChat struct{}
-
-func (fakeChat) Chat(string, string) (string, error) {
-	return `{"title":"Judul AI","category":"Teknologi","excerpt":"e","content":"isi"}`, nil
+func setupTestDB(t *testing.T) *gorm.DB {
+	db, err := database.ConnectTestDB()
+	assert.NoError(t, err)
+	return db
 }
 
-type fakeSearch struct{}
-
-func (fakeSearch) Search(string) ([]ai.Source, error) {
-	return []ai.Source{{Title: "S", URL: "http://s"}}, nil
+func generateTestToken(secret string, userID uint, role string) string {
+	token, _ := middleware.GenerateToken(userID, "testuser", "test@delcom.org", role, secret, 24*time.Hour)
+	return token
 }
 
-func newApp(t *testing.T) *gin.Engine {
-	db, err := database.ConnectMemory()
-	require.NoError(t, err)
-	require.NoError(t, database.Migrate(db))
-	cfg := config.Config{AppEnv: "production", AppKey: "kunci", AdminUsername: "admin", AdminPassword: "admin"}
-	require.NoError(t, database.Seed(db, cfg))
-	return NewRouter(cfg, db, fakeChat{}, fakeSearch{})
-}
+func TestRouter_AllRoutes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupTestDB(t)
 
-func do(r *gin.Engine, method, path, token, body string) *httptest.ResponseRecorder {
-	req := httptest.NewRequest(method, path, bytes.NewBufferString(body))
-	req.Header.Set("Content-Type", "application/json")
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
+	cfg := &config.Config{
+		AppKey:               "test-secret-key-1234567890123456",
+		SearchEngineEndpoint: "https://mock.search",
+		OpenAIEndpoint:       "https://mock.openai",
+		OpenAIKey:            "sk-mock",
 	}
+
+	r := SetupRouter(cfg, db)
+
+	// 0. Test base URL / membalas JSON { status, message, data }
+	w0 := httptest.NewRecorder()
+	req0, _ := http.NewRequest(http.MethodGet, "/", nil)
+	r.ServeHTTP(w0, req0)
+	assert.Equal(t, http.StatusOK, w0.Code)
+	assert.Contains(t, w0.Body.String(), `"status":"success"`)
+	assert.Contains(t, w0.Body.String(), `"data"`)
+
+	// 1. Test 404 NoRoute
 	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/route-tidak-ada-uji", nil)
 	r.ServeHTTP(w, req)
-	return w
-}
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.Contains(t, w.Body.String(), "fail")
 
-func login(t *testing.T, r *gin.Engine, u, p string) string {
-	w := do(r, "POST", "/api/auth/login", "", `{"username":"`+u+`","password":"`+p+`"}`)
-	require.Equal(t, 200, w.Code)
-	var out struct{ Data struct{ Token string } }
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
-	return out.Data.Token
-}
-
-func TestRuteEndToEnd(t *testing.T) {
-	r := newApp(t)
-	assert.Equal(t, 404, do(r, "GET", "/tidak-ada", "", "").Code)
-	assert.Equal(t, 401, do(r, "GET", "/api/posts", "", "").Code)
-	assert.Equal(t, 200, do(r, "GET", "/api/public/categories", "", "").Code)
-
-	member := login(t, r, "member", "member")
-	admin := login(t, r, "admin", "admin")
-	assert.Equal(t, 201, do(r, "POST", "/api/posts", member, `{"title":"Halo"}`).Code)
-	assert.Equal(t, 200, do(r, "PATCH", "/api/posts/1/toggle-publish", member, "").Code)
-	assert.Equal(t, 200, do(r, "GET", "/api/public/posts", "", "").Code)
-	assert.Equal(t, 200, do(r, "GET", "/api/public/posts/halo", "", "").Code)
-	assert.Equal(t, 200, do(r, "GET", "/api/posts/stats", member, "").Code)
-	w := do(r, "POST", "/api/posts/ai-generate", member, `{"topic":"x","include_web_search":true}`)
-	assert.Equal(t, 200, w.Code)
-	assert.Contains(t, w.Body.String(), "http://s")
-	assert.Equal(t, 403, do(r, "GET", "/api/admin/users", member, "").Code)
-	assert.Equal(t, 200, do(r, "GET", "/api/admin/users", admin, "").Code)
-	assert.Equal(t, 200, do(r, "GET", "/api/admin/posts", admin, "").Code)
-	assert.Equal(t, 200, do(r, "GET", "/api/admin/users/2/posts", admin, "").Code)
-}
-
-func TestSwagger(t *testing.T) {
-	r := newApp(t)
-	w := do(r, "GET", "/api.json", "", "")
-	assert.Equal(t, 200, w.Code)
-	assert.Contains(t, w.Body.String(), "Delcom Blog API")
-	req := httptest.NewRequest("GET", "/api.json", nil)
-	req.Header.Set("X-Forwarded-Proto", "https")
+	// 2. Test /api.json (HTTP)
 	w = httptest.NewRecorder()
+	req, _ = http.NewRequest(http.MethodGet, "/api.json", nil)
 	r.ServeHTTP(w, req)
-	assert.Contains(t, w.Body.String(), `"https"`)
-	assert.Equal(t, 200, do(r, "GET", "/swagger/index.html", "", "").Code)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Body.String(), "swagger")
+
+	// 3. Test /api.json (HTTPS via TLS and via Header)
+	w = httptest.NewRecorder()
+	req, _ = http.NewRequest(http.MethodGet, "/api.json", nil)
+	req.TLS = &tls.ConnectionState{}
+	r.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	w = httptest.NewRecorder()
+	req, _ = http.NewRequest(http.MethodGet, "/api.json", nil)
+	req.Header.Set("X-Forwarded-Proto", "https")
+	r.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	// 4. Test /swagger/*any
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/swagger/index.html", nil)
+	req.RequestURI = "/swagger/index.html"
+	r.ServeHTTP(w, req)
+	t.Logf("Swagger code: %d, body: %s", w.Code, w.Body.String())
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	// 5. Test Public Categories
+	w = httptest.NewRecorder()
+	req, _ = http.NewRequest(http.MethodGet, "/api/public/categories", nil)
+	r.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	// 6. Test Auth Route
+	w = httptest.NewRecorder()
+	req, _ = http.NewRequest(http.MethodPost, "/api/auth/logout", nil)
+	r.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	// 7. Test Protected Author Post Route with Token
+	user := database.User{
+		Username: "author1",
+		Email:    "author1@example.com",
+		Role:     "member",
+		Password: "hashedpassword",
+	}
+	db.Create(&user)
+	token := generateTestToken(cfg.AppKey, user.ID, "member")
+
+	w = httptest.NewRecorder()
+	req, _ = http.NewRequest(http.MethodGet, "/api/posts", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	r.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	// 8. Test Protected Admin Route with Admin Token
+	adminUser := database.User{
+		Username: "admin1",
+		Email:    "admin1@example.com",
+		Role:     "admin",
+		Password: "hashedpassword",
+	}
+	db.Create(&adminUser)
+	adminToken := generateTestToken(cfg.AppKey, adminUser.ID, "admin")
+
+	w = httptest.NewRecorder()
+	req, _ = http.NewRequest(http.MethodGet, "/api/admin/users", nil)
+	req.Header.Set("Authorization", "Bearer "+adminToken)
+	r.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
 }

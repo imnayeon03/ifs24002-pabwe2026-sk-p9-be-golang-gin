@@ -1,27 +1,43 @@
 package ai
 
 import (
+	"errors"
 	"net/http"
 
-	"github.com/gin-gonic/gin"
-
 	"app/internal/response"
+
+	"github.com/gin-gonic/gin"
 )
 
-type Handler struct{ svc *Service }
+type Handler struct {
+	service Service
+}
 
-func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+func NewHandler(service Service) *Handler {
+	return &Handler{service: service}
+}
 
-func (h *Handler) Generate(c *gin.Context) {
-	var req GenerateRequest
+func (h *Handler) GenerateDraft(c *gin.Context) {
+	var req GenerateDraftRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Fail(c, http.StatusBadRequest, "Topik wajib diisi")
+		response.Fail(c, http.StatusBadRequest, "Field topic wajib diisi dengan format JSON yang valid")
 		return
 	}
-	d, err := h.svc.Generate(req)
+
+	if req.Topic == "" {
+		response.Fail(c, http.StatusBadRequest, "Field topic wajib diisi")
+		return
+	}
+
+	draft, err := h.service.GenerateDraft(&req)
 	if err != nil {
-		response.Error(c, "Gagal menghasilkan artikel: "+err.Error())
+		if errors.Is(err, ErrTopicRequired) {
+			response.Fail(c, http.StatusBadRequest, "Field topic wajib diisi")
+			return
+		}
+		response.Error(c, http.StatusInternalServerError, "Gagal memproses draf OpenAI: "+err.Error())
 		return
 	}
-	response.Success(c, http.StatusOK, "Draf artikel berhasil dibuat", d)
+
+	response.Success(c, http.StatusOK, "Draf artikel AI berhasil dibuat", draft)
 }

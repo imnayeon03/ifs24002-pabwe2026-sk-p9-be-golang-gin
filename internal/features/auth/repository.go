@@ -1,32 +1,64 @@
 package auth
 
 import (
-	"gorm.io/gorm"
-
 	"app/internal/database"
+
+	"gorm.io/gorm"
 )
 
-type Repository struct{ db *gorm.DB }
-
-func NewRepository(db *gorm.DB) *Repository { return &Repository{db: db} }
-
-func (r *Repository) Create(u *database.User) error { return r.db.Create(u).Error }
-
-func (r *Repository) ByUsername(name string) (*database.User, error) {
-	var u database.User
-	return &u, r.db.Where("username = ?", name).First(&u).Error
+type Repository interface {
+	Create(user *database.User) error
+	FindByUsername(username string) (*database.User, error)
+	FindByEmail(email string) (*database.User, error)
+	FindByUsernameOrEmail(identifier string) (*database.User, error)
+	FindByID(id uint) (*database.User, error)
+	Update(user *database.User) error
 }
 
-func (r *Repository) ByID(id uint) (*database.User, error) {
-	var u database.User
-	return &u, r.db.First(&u, id).Error
+type repository struct {
+	db *gorm.DB
 }
 
-func (r *Repository) Exists(username, email string, exceptID uint) (bool, error) {
-	var n int64
-	err := r.db.Model(&database.User{}).
-		Where("(username = ? OR email = ?) AND id <> ?", username, email, exceptID).Count(&n).Error
-	return n > 0, err
+func NewRepository(db *gorm.DB) Repository {
+	return &repository{db: db}
 }
 
-func (r *Repository) Save(u *database.User) error { return r.db.Save(u).Error }
+func (r *repository) Create(user *database.User) error {
+	return r.db.Create(user).Error
+}
+
+func (r *repository) FindByUsername(username string) (*database.User, error) {
+	var user database.User
+	if err := r.db.Where("LOWER(username) = LOWER(?)", username).First(&user).Error; err != nil {
+		return nil, err
+	}
+	return &user, nil
+}
+
+func (r *repository) FindByEmail(email string) (*database.User, error) {
+	var user database.User
+	if err := r.db.Where("LOWER(email) = LOWER(?)", email).First(&user).Error; err != nil {
+		return nil, err
+	}
+	return &user, nil
+}
+
+func (r *repository) FindByUsernameOrEmail(identifier string) (*database.User, error) {
+	var user database.User
+	if err := r.db.Where("LOWER(username) = LOWER(?) OR LOWER(email) = LOWER(?)", identifier, identifier).First(&user).Error; err != nil {
+		return nil, err
+	}
+	return &user, nil
+}
+
+func (r *repository) FindByID(id uint) (*database.User, error) {
+	var user database.User
+	if err := r.db.First(&user, id).Error; err != nil {
+		return nil, err
+	}
+	return &user, nil
+}
+
+func (r *repository) Update(user *database.User) error {
+	return r.db.Save(user).Error
+}

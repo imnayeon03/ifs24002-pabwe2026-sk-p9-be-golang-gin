@@ -5,129 +5,234 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/gin-gonic/gin"
-
-	"app/internal/middleware"
 	"app/internal/response"
+
+	"github.com/gin-gonic/gin"
 )
 
-type Handler struct{ svc *Service }
+type Handler struct {
+	service Service
+}
 
-func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+func NewHandler(service Service) *Handler {
+	return &Handler{service: service}
+}
 
-func uid(c *gin.Context) uint { return middleware.CurrentUser(c).UserID }
+func (h *Handler) GetCategories(c *gin.Context) {
+	categories := h.service.GetCategories()
+	response.Success(c, http.StatusOK, "Daftar kategori berhasil diambil", categories)
+}
 
-func id(c *gin.Context) (uint, bool) {
-	n, err := strconv.ParseUint(c.Param("id"), 10, 64)
+func (h *Handler) GetPublicPosts(c *gin.Context) {
+	category := c.Query("category")
+	query := c.Query("q")
+
+	posts, err := h.service.GetPublicPosts(category, query)
 	if err != nil {
-		response.Fail(c, http.StatusBadRequest, "ID tidak valid")
-		return 0, false
-	}
-	return uint(n), true
-}
-
-func (h *Handler) reply(c *gin.Context, code int, msg string, data interface{}, err error) {
-	switch {
-	case err == nil:
-		response.Success(c, code, msg, data)
-	case errors.Is(err, ErrNotFound):
-		response.Fail(c, http.StatusNotFound, err.Error())
-	case errors.Is(err, ErrInvalidCategory):
-		response.Fail(c, http.StatusBadRequest, err.Error())
-	default:
-		response.Error(c, "Terjadi kesalahan pada server")
-	}
-}
-
-func (h *Handler) Categories(c *gin.Context) {
-	response.Success(c, http.StatusOK, "Daftar kategori", Categories)
-}
-
-func (h *Handler) Public(c *gin.Context) {
-	posts, err := h.svc.Public(Filter{Query: c.Query("q"), Category: c.Query("category")})
-	h.reply(c, http.StatusOK, "Daftar artikel", posts, err)
-}
-
-func (h *Handler) PublicBySlug(c *gin.Context) {
-	p, err := h.svc.PublicBySlug(c.Param("slug"))
-	h.reply(c, http.StatusOK, "Detail artikel", p, err)
-}
-
-func (h *Handler) Mine(c *gin.Context) {
-	posts, err := h.svc.Mine(uid(c))
-	h.reply(c, http.StatusOK, "Artikel saya", posts, err)
-}
-
-func (h *Handler) Stats(c *gin.Context) {
-	s, err := h.svc.Stats(uid(c))
-	h.reply(c, http.StatusOK, "Statistik artikel", s, err)
-}
-
-func (h *Handler) Get(c *gin.Context) {
-	n, ok := id(c)
-	if !ok {
+		response.Error(c, http.StatusInternalServerError, "Gagal mengambil daftar artikel publik: "+err.Error())
 		return
 	}
-	p, err := h.svc.Get(uid(c), n)
-	h.reply(c, http.StatusOK, "Detail artikel", p, err)
+	response.Success(c, http.StatusOK, "Daftar artikel publik berhasil diambil", posts)
 }
 
-func (h *Handler) Create(c *gin.Context) {
-	var req PostRequest
+func (h *Handler) GetPublicPostBySlug(c *gin.Context) {
+	slug := c.Param("slug")
+	post, err := h.service.GetPublicPostBySlug(slug)
+	if err != nil {
+		response.Fail(c, http.StatusNotFound, "Artikel tidak ditemukan")
+		return
+	}
+	response.Success(c, http.StatusOK, "Detail artikel berhasil diambil", post)
+}
+
+func (h *Handler) CreatePost(c *gin.Context) {
+	userID := c.GetUint("user_id")
+	var req CreatePostRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Fail(c, http.StatusBadRequest, "Judul artikel wajib diisi")
+		response.Fail(c, http.StatusBadRequest, "Payload request tidak valid")
 		return
 	}
-	p, err := h.svc.Create(uid(c), req)
-	h.reply(c, http.StatusCreated, "Artikel dibuat", p, err)
+
+	post, err := h.service.CreatePost(userID, &req)
+	if err != nil {
+		if errors.Is(err, ErrInvalidInput) {
+			response.Fail(c, http.StatusBadRequest, "Judul dan konten artikel wajib diisi")
+			return
+		}
+		response.Error(c, http.StatusInternalServerError, "Gagal membuat artikel: "+err.Error())
+		return
+	}
+	response.Success(c, http.StatusCreated, "Artikel berhasil dibuat", post)
 }
 
-func (h *Handler) Update(c *gin.Context) {
-	n, ok := id(c)
-	if !ok {
+func (h *Handler) GetAuthorPosts(c *gin.Context) {
+	userID := c.GetUint("user_id")
+	posts, err := h.service.GetAuthorPosts(userID)
+	if err != nil {
+		response.Error(c, http.StatusInternalServerError, "Gagal mengambil artikel: "+err.Error())
 		return
 	}
-	var req PostRequest
+	response.Success(c, http.StatusOK, "Daftar artikel penulis berhasil diambil", posts)
+}
+
+func (h *Handler) GetPostByID(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		response.Fail(c, http.StatusBadRequest, "ID artikel tidak valid")
+		return
+	}
+
+	userID := c.GetUint("user_id")
+	role := c.GetString("role")
+
+	post, err := h.service.GetPostByID(uint(id), userID, role)
+	if err != nil {
+		if errors.Is(err, ErrPostNotFound) {
+			response.Fail(c, http.StatusNotFound, "Artikel tidak ditemukan")
+			return
+		}
+		if errors.Is(err, ErrForbidden) {
+			response.Fail(c, http.StatusForbidden, err.Error())
+			return
+		}
+		response.Error(c, http.StatusInternalServerError, "Gagal mengambil artikel: "+err.Error())
+		return
+	}
+	response.Success(c, http.StatusOK, "Detail artikel berhasil diambil", post)
+}
+
+func (h *Handler) GetAuthorStats(c *gin.Context) {
+	userID := c.GetUint("user_id")
+	stats, err := h.service.GetAuthorStats(userID)
+	if err != nil {
+		response.Error(c, http.StatusInternalServerError, "Gagal mengambil statistik: "+err.Error())
+		return
+	}
+	response.Success(c, http.StatusOK, "Statistik artikel berhasil diambil", stats)
+}
+
+func (h *Handler) UpdatePost(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		response.Fail(c, http.StatusBadRequest, "ID artikel tidak valid")
+		return
+	}
+
+	userID := c.GetUint("user_id")
+	role := c.GetString("role")
+
+	var req UpdatePostRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Fail(c, http.StatusBadRequest, "Judul artikel wajib diisi")
+		response.Fail(c, http.StatusBadRequest, "Payload request tidak valid")
 		return
 	}
-	p, err := h.svc.Update(uid(c), n, req)
-	h.reply(c, http.StatusOK, "Artikel diperbarui", p, err)
+
+	post, err := h.service.UpdatePost(uint(id), userID, role, &req)
+	if err != nil {
+		if errors.Is(err, ErrPostNotFound) {
+			response.Fail(c, http.StatusNotFound, "Artikel tidak ditemukan")
+			return
+		}
+		if errors.Is(err, ErrForbidden) {
+			response.Fail(c, http.StatusForbidden, err.Error())
+			return
+		}
+		if errors.Is(err, ErrInvalidInput) {
+			response.Fail(c, http.StatusBadRequest, err.Error())
+			return
+		}
+		response.Error(c, http.StatusInternalServerError, "Gagal memperbarui artikel: "+err.Error())
+		return
+	}
+	response.Success(c, http.StatusOK, "Artikel berhasil diperbarui", post)
 }
 
 func (h *Handler) TogglePublish(c *gin.Context) {
-	n, ok := id(c)
-	if !ok {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		response.Fail(c, http.StatusBadRequest, "ID artikel tidak valid")
 		return
 	}
-	p, err := h.svc.TogglePublish(uid(c), n)
-	h.reply(c, http.StatusOK, "Status publikasi diubah", p, err)
-}
 
-func (h *Handler) Delete(c *gin.Context) {
-	n, ok := id(c)
-	if !ok {
+	userID := c.GetUint("user_id")
+	role := c.GetString("role")
+
+	post, err := h.service.TogglePublish(uint(id), userID, role)
+	if err != nil {
+		if errors.Is(err, ErrPostNotFound) {
+			response.Fail(c, http.StatusNotFound, "Artikel tidak ditemukan")
+			return
+		}
+		if errors.Is(err, ErrForbidden) {
+			response.Fail(c, http.StatusForbidden, err.Error())
+			return
+		}
+		response.Error(c, http.StatusInternalServerError, "Gagal mengubah status publikasi: "+err.Error())
 		return
 	}
-	h.reply(c, http.StatusOK, "Artikel dihapus", nil, h.svc.Delete(uid(c), n))
+	response.Success(c, http.StatusOK, "Status publikasi artikel berhasil diubah", post)
 }
 
-func (h *Handler) AdminUsers(c *gin.Context) {
-	u, err := h.svc.AdminUsers()
-	h.reply(c, http.StatusOK, "Daftar pengguna", u, err)
-}
-
-func (h *Handler) AdminPosts(c *gin.Context) {
-	p, err := h.svc.AdminPosts()
-	h.reply(c, http.StatusOK, "Semua artikel", p, err)
-}
-
-func (h *Handler) AdminUserPosts(c *gin.Context) {
-	n, ok := id(c)
-	if !ok {
+func (h *Handler) DeletePost(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		response.Fail(c, http.StatusBadRequest, "ID artikel tidak valid")
 		return
 	}
-	p, err := h.svc.AdminUserPosts(n)
-	h.reply(c, http.StatusOK, "Artikel pengguna", p, err)
+
+	userID := c.GetUint("user_id")
+	role := c.GetString("role")
+
+	err = h.service.DeletePost(uint(id), userID, role)
+	if err != nil {
+		if errors.Is(err, ErrPostNotFound) {
+			response.Fail(c, http.StatusNotFound, "Artikel tidak ditemukan")
+			return
+		}
+		if errors.Is(err, ErrForbidden) {
+			response.Fail(c, http.StatusForbidden, err.Error())
+			return
+		}
+		response.Error(c, http.StatusInternalServerError, "Gagal menghapus artikel: "+err.Error())
+		return
+	}
+	response.Success(c, http.StatusOK, "Artikel berhasil dihapus")
+}
+
+func (h *Handler) GetAdminPosts(c *gin.Context) {
+	posts, err := h.service.GetAdminPosts()
+	if err != nil {
+		response.Error(c, http.StatusInternalServerError, "Gagal mengambil seluruh artikel: "+err.Error())
+		return
+	}
+	response.Success(c, http.StatusOK, "Seluruh artikel berhasil diambil", posts)
+}
+
+func (h *Handler) GetAdminUsers(c *gin.Context) {
+	users, err := h.service.GetAdminUsers()
+	if err != nil {
+		response.Error(c, http.StatusInternalServerError, "Gagal mengambil daftar pengguna: "+err.Error())
+		return
+	}
+	response.Success(c, http.StatusOK, "Daftar pengguna berhasil diambil", users)
+}
+
+func (h *Handler) GetAdminUserPosts(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		response.Fail(c, http.StatusBadRequest, "ID pengguna tidak valid")
+		return
+	}
+
+	posts, err := h.service.GetAdminUserPosts(uint(id))
+	if err != nil {
+		response.Error(c, http.StatusInternalServerError, "Gagal mengambil artikel pengguna: "+err.Error())
+		return
+	}
+	response.Success(c, http.StatusOK, "Artikel pengguna berhasil diambil", posts)
 }

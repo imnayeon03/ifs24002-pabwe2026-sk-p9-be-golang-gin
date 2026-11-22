@@ -3,72 +3,65 @@ package ai
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 )
 
-// SearchClient memanggil Search Engine: GET {endpoint}?q=...
-type SearchClient struct {
-	Endpoint string
-	HTTP     *http.Client
+type SearchClient interface {
+	Search(query string) ([]SearchResultItem, error)
 }
 
-func NewSearchClient(endpoint string) *SearchClient {
-	return &SearchClient{Endpoint: endpoint, HTTP: &http.Client{Timeout: 30 * time.Second}}
+type searchClient struct {
+	endpoint   string
+	httpClient *http.Client
 }
 
-type rawResult struct {
-	Title   string `json:"title"`
-	URL     string `json:"url"`
-	Link    string `json:"link"`
-	Snippet string `json:"snippet"`
-	Content string `json:"content"`
+func NewSearchClient(endpoint string, customClient ...*http.Client) SearchClient {
+	client := &http.Client{Timeout: 10 * time.Second}
+	if len(customClient) > 0 && customClient[0] != nil {
+		client = customClient[0]
+	}
+	return &searchClient{
+		endpoint:   endpoint,
+		httpClient: client,
+	}
 }
 
-// Search menerima bentuk {"results":[...]}, {"data":[...]} atau {"data":{"results":[...]}}.
-func (s *SearchClient) Search(query string) ([]Source, error) {
-	res, err := s.HTTP.Get(s.Endpoint + "?q=" + url.QueryEscape(query))
+type searchResponseWrapper struct {
+	Data []SearchResultItem `json:"data"`
+}
+
+func (s *searchClient) Search(query string) ([]SearchResultItem, error) {
+	if s.endpoint == "" || query == "" {
+		return nil, nil
+	}
+
+	searchURL := fmt.Sprintf("%s?q=%s", s.endpoint, url.QueryEscape(query))
+	req, _ := http.NewRequest(http.MethodGet, searchURL, nil)
+
+	resp, err := s.httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
-	defer res.Body.Close()
-	if res.StatusCode >= 300 {
-		return nil, fmt.Errorf("search engine mengembalikan status %d", res.StatusCode)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("search engine returned status: %d", resp.StatusCode)
 	}
-	var body struct {
-		Results []rawResult     `json:"results"`
-		Data    json.RawMessage `json:"data"`
+
+	body, _ := io.ReadAll(resp.Body)
+
+	var directList []SearchResultItem
+	if err := json.Unmarshal(body, &directList); err == nil && len(directList) > 0 {
+		return directList, nil
 	}
-	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
-		return nil, err
+
+	var wrapped searchResponseWrapper
+	if err := json.Unmarshal(body, &wrapped); err == nil && len(wrapped.Data) > 0 {
+		return wrapped.Data, nil
 	}
-	items := body.Results
-	if len(items) == 0 && len(body.Data) > 0 {
-		var arr []rawResult
-		var nested struct {
-			Results []rawResult `json:"results"`
-		}
-		if json.Unmarshal(body.Data, &arr) == nil {
-			items = arr
-		} else if json.Unmarshal(body.Data, &nested) == nil {
-			items = nested.Results
-		}
-	}
-	out := make([]Source, 0, len(items))
-	for _, it := range items {
-		link := it.URL
-		if link == "" {
-			link = it.Link
-		}
-		snippet := it.Snippet
-		if snippet == "" {
-			snippet = it.Content
-		}
-		if link != "" {
-			out = append(out, Source{Title: strings.TrimSpace(it.Title), URL: link, Snippet: strings.TrimSpace(snippet)})
-		}
-	}
-	return out, nil
+
+	return nil, nil
 }
