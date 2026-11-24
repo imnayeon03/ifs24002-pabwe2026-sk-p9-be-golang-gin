@@ -11,7 +11,7 @@ Backend REST API untuk aplikasi **Delcom Blog — Platform Publikasi Artikel Mul
    ```
 3. Jalankan server:
    ```bash
-   go run cmd/server/main.go
+   go run main.go
    ```
    Server aktif pada: `http://localhost:8081`
    Swagger UI: `http://localhost:8081/swagger/index.html`
